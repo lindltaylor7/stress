@@ -10,7 +10,8 @@ const Sentiment = require('sentiment')
 const { generateRequestUrl, normaliseResponse } = require('google-translate-api-browser')
 const https = require('https')
 const fs = require('fs')
-const db = require('./db')
+const db = require('./db');
+const { request } = require('http');
 
 dotenv.config();
 
@@ -34,8 +35,9 @@ passport.use(new FacebookStrategy({
   callbackURL: "http://localhost:3000/auth/facebook/callback"
 },
 function(accessToken, refreshToken, profile, cb) {
-  db.execute('INSERT INTO users(name, token, long_token)  VALUES (?, ?, ?)',
-  [profile.displayName,accessToken,'-'])
+  console.log('insert data user in bd')
+  db.execute('INSERT INTO users(name, token, fb_id)  VALUES (?, ?, ?)',
+  [profile.displayName,accessToken,profile.id])
   .then(res =>{
     return cb(null, false, res)
   })
@@ -45,12 +47,7 @@ function(accessToken, refreshToken, profile, cb) {
 app.get('/auth/facebook',
   passport.authenticate('facebook',{ scope: ['public_profile', 'user_posts'] }))
 
-app.get('/auth/facebook/callback',
-  passport.authenticate('facebook', { failureRedirect: '/errorAuth' }),
-  function(req, res) {
-    // Successful authentication, redirect home.
-    res.redirect('/success')
-  })
+app.get('/auth/facebook/callback', passport.authenticate('facebook', { failureRedirect: '/getPosts' }))
 
   app.get('/success', (req, res) => {
     res.send('<a href="/getPosts">Continuar</a>')
@@ -208,7 +205,6 @@ fs.writeFileSync(filename, data); */
   }
 
   app.get('/getPosts', async(req, res) => {
-    console.log('analizando posts')
     try{
       const [data, fields] = await db.query('SELECT * FROM users ORDER BY id DESC LIMIT 1')
       const code = data[0].token
@@ -219,7 +215,7 @@ fs.writeFileSync(filename, data); */
       const stressRatio = await processSentiment(texts)
       res.send(`Se han analizado las imagenes y usted posee un valor de estres de: ${stressRatio}`)
     }catch (error){
-      console.log(error)
+      console.log(error.response)
       res.status(500).send('Error al procesar las imágenes')
     }
   })
