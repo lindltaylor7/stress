@@ -1,5 +1,9 @@
 const express = require('express')
+const bodyParser = require('body-parser');
+const url = require('url');
 const axios = require("axios")
+const passport = require('passport')
+const FacebookStrategy = require('passport-facebook').Strategy
 const dotenv = require("dotenv")
 const Tesseract = require('tesseract.js')
 const Sentiment = require('sentiment')
@@ -14,15 +18,47 @@ const app = express()
 const PORT = process.env.port || 3000
 const facebookGraphUrl = "https://graph.facebook.com"
 
-
+app.use(bodyParser.json())
+app.use(bodyParser.urlencoded({ extended: true }))
 
 
 app.get('/', (req, res) => {
-    res.sendFile('index.html', {
-        root: __dirname
-    })
+  res.sendFile('index.html', {
+      root: __dirname
+  })
 })
 
+passport.use(new FacebookStrategy({
+  clientID: process.env.FACEBOOK_APP_ID,
+  clientSecret: process.env.FACEBOOK_APP_SECRET,
+  callbackURL: "http://localhost:3000/auth/facebook/callback"
+},
+function(accessToken, refreshToken, profile, cb) {
+  db.execute('INSERT INTO users(name, token, long_token)  VALUES (?, ?, ?)',
+  [profile.displayName,accessToken,'-'])
+  .then(res =>{
+    return cb(null, false, res)
+  })
+}
+))
+
+app.get('/auth/facebook',
+  passport.authenticate('facebook',{ scope: ['public_profile', 'user_posts'] }))
+
+app.get('/auth/facebook/callback',
+  passport.authenticate('facebook', { failureRedirect: '/errorAuth' }),
+  function(req, res) {
+    // Successful authentication, redirect home.
+    res.redirect('/success')
+  })
+
+  app.get('/success', (req, res) => {
+    res.send('<a href="/getPosts">Continuar</a>')
+  })
+
+  app.get('/errorAuth', (req, res) => {
+    res.send('Continuar <a href="/getPosts">Seguir</a>')
+  })
 
 
 app.get('/tesseract', (req, res) => {
@@ -113,42 +149,78 @@ const filename = `accessToken_${now.getTime()}.txt`;
 fs.writeFileSync(filename, data); */
   })
 
+  app.get('/users/:username', (req, res) => {
+    const parsedUrl = url.parse(req.url, true)
+    res.send(req.url)
+  })
+
   app.get("/callback", async (req, res) => {
-    var tokenUser = ''
-
-    db.execute('SELECT * FROM users').then(([data, fields])=>{
-      console.log(data)
-      tokenUser = data[0].token
-    })
-    .catch(err =>{
-      console.loge(err)
-    })
-
-
-    const code = req.query.code
+    const parsedUrl = url.parse(req.url, true)
+    const hash = parsedUrl.hash
+    //const accessToken = parsedUrl.hash.replace('#access_token=', '')
+    console.log(hash)  
+    /* console.log('recibiendo token oauth',req.query)
+    const code = req.query.access_token
     const clientId = process.env.FACEBOOK_APP_ID
     const clientSecret = process.env.FACEBOOK_APP_SECRET
-    const redirectUri = encodeURIComponent(process.env.FACEBOOK_REDIRECT_URI)
+    const redirectUri = encodeURIComponent(process.env.FACEBOOK_REDIRECT_URI) */
   
-    try {
-      console.log('llamando al graph', tokenUser)
-      const accessTokenResponse = await axios.get(`https://graph.facebook.com/v16.0/me/posts?fields=description%2Ccaption%2Cfull_picture&access_token=EAACrfYRFXBkBAGsXEbAlfhbZBXMBjpffbr6VSOZAwURSZCAgShcUha4NvJccYAgIZB6QujDbJYz6D0jzTejhjrLFhV29mgjLYf83QZArwlAiZASFfa3kqUZCexIq25n0fXemRRwHgX7fETs4k5DCZAmZAA6Cm9cFgZB0KZBgmgg47NxgPyXLe6ZCHLsHLGskpH8kbu2ahyBZCayj7UQdYB7c3GC6lWevrwrsMr7hCYUrlVfPuPIHOPuHyL6Nm`)
+    /* try {
+      console.log('llamando al graph', code)
+      const accessTokenResponse = await axios.get(`https://graph.facebook.com/v16.0/me/posts?fields=description%2Ccaption%2Cfull_picture&access_token=${code}`)
       .then((response)=>{
         console.log(response.data)
         res.json(response.data)
       })
-  
-      /* const accessToken = accessTokenResponse.data.access_token; */
 
+      const accessToken = accessTokenResponse.data.access_token; 
   
-      /* const postsResponse = await axios.get(`${facebookGraphUrl}/me`);
+      const postsResponse = await axios.get(`${facebookGraphUrl}/me`);
   
       const posts = postsResponse.data.data
   
-      res.json({ posts: posts }) */
+      res.json({ posts: posts }) 
     } catch (error) {
-      console.error(error.response.data)
+      console.error(error)
       res.status(500).send("Error al obtener los posts del usuario.")
+    } */
+  })
+
+  async function processPictures(pictures){
+    const texts = []
+    for (const picture of pictures) {
+      const { data: { text } } = await Tesseract.recognize(picture, 'spa')
+      texts.push(text)
+    }
+    return texts
+  }
+
+  async function processSentiment(texts){
+    var sentiment = new Sentiment()
+
+    const scores = texts.map(text => sentiment.analyze(text).score)
+
+    const totalScore = scores.reduce((acc, cur) => acc + cur, 0)
+
+    const stressParameter = totalScore/texts.length
+    
+    return stressParameter
+  }
+
+  app.get('/getPosts', async(req, res) => {
+    console.log('analizando posts')
+    try{
+      const [data, fields] = await db.query('SELECT * FROM users ORDER BY id DESC LIMIT 1')
+      const code = data[0].token
+      const response = await axios.get(`https://graph.facebook.com/v16.0/me/posts?fields=description%2Ccaption%2Cfull_picture&access_token=${code}`)
+      const dataPosts = response.data.data
+      const pictures = dataPosts.filter(post => post.full_picture != null).map(post => post.full_picture)
+      const texts = await processPictures(pictures)
+      const stressRatio = await processSentiment(texts)
+      res.send(`Se han analizado las imagenes y usted posee un valor de estres de: ${stressRatio}`)
+    }catch (error){
+      console.log(error)
+      res.status(500).send('Error al procesar las imágenes')
     }
   })
   
