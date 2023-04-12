@@ -208,7 +208,7 @@ fs.writeFileSync(filename, data); */
     try{
       const [data, fields] = await db.query('SELECT * FROM users ORDER BY id DESC LIMIT 1')
       const code = data[0].token
-      const response = await axios.get(`https://graph.facebook.com/v16.0/me/posts?fields=description%2Ccaption%2Cfull_picture&access_token=${code}`)
+      const response = await axios.get(`https://graph.facebook.com/v16.0/me/posts?fields=description%2Ccaption%2Cfull_picture&since=2022-10-12&access_token=${code}`)
       const dataPosts = response.data.data
       const pictures = dataPosts.filter(post => post.full_picture != null).map(post => post.full_picture)
       const texts = await processPictures(pictures)
