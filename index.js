@@ -103,29 +103,28 @@ app.get('/sentiment', (req, res) => {
     res.send(`El usuario tiene un indicador de estres de: ${stressParameter}`)
 })
 
-app.get('/meaningCloud', (req, res) => {
-    const formdata = new FormData();
-    formdata.append("key", "8b6538d2a4c36a913a99ff41ec10f998");
-    formdata.append("txt", "Cada día trae nuevas oportunidades para alcanzar tus sueños.");
-    formdata.append("lang", "es");  // 2-letter code, like en es fr ...
+app.get('/meaningCloud', async (req, res) => {
+  const formdata = new FormData();
+  formdata.append("key", "8b6538d2a4c36a913a99ff41ec10f998");
+  formdata.append("txt", "Cada día trae nuevas oportunidades para alcanzar tus sueños.");
+  formdata.append("lang", "es");  // 2-letter code, like en es fr ...
 
-    const requestOptions = {
+  const requestOptions = {
     method: 'POST',
     body: formdata,
     redirect: 'follow'
-    };
+  };
 
-    const response = fetch("https://api.meaningcloud.com/sentiment-2.1", requestOptions)
-    .then(response => ({
-        status: response.status, 
-        body: response.json()
-    }))
-    .then(({ status, body }) => {
-        console.log(status, body)
-        res.send(body)
-    })
-    .catch(error => console.log('error', error));
-})
+  try {
+    const response = await fetch("https://api.meaningcloud.com/sentiment-2.1", requestOptions);
+    const data = await response.json();
+    console.log(data);
+    res.send(data);
+  } catch (error) {
+    console.log('error', error);
+    res.status(500).send('Error al obtener datos de MeaningCloud');
+  }
+});
 
 app.get("/login", (req, res) => {
     const clientId = process.env.FACEBOOK_APP_ID
@@ -183,6 +182,38 @@ fs.writeFileSync(filename, data); */
     } */
   })
 
+  async function meaningCloudProcess(texts){
+
+    const sentimentResults = []
+
+      for(const text of texts){
+        const formdata = new FormData();
+      formdata.append("key", "8b6538d2a4c36a913a99ff41ec10f998");
+      formdata.append("txt", text);
+      formdata.append("lang", "es");  // 2-letter code, like en es fr ...
+    
+      const requestOptions = {
+        method: 'POST',
+        body: formdata,
+        redirect: 'follow'
+      };
+    
+      try {
+        const response = await fetch("https://api.meaningcloud.com/sentiment-2.1", requestOptions);
+        const data = await response.json();
+        console.log(data.score_tag);
+        sentimentResults.push(data)
+        
+      } catch (error) {
+        console.log('error', error);
+       
+      }
+    }
+
+    return sentimentResults
+    
+  }
+
   async function processPictures(pictures){
     const texts = []
     for (const picture of pictures) {
@@ -204,16 +235,35 @@ fs.writeFileSync(filename, data); */
     return stressParameter
   }
 
+  function sixMonthsago(date){
+    
+  }
+
   app.get('/getPosts', async(req, res) => {
     try{
       const [data, fields] = await db.query('SELECT * FROM users ORDER BY id DESC LIMIT 1')
       const code = data[0].token
-      const response = await axios.get(`https://graph.facebook.com/v16.0/me/posts?fields=description%2Ccaption%2Cfull_picture&since=2022-10-12&access_token=${code}`)
-      const dataPosts = response.data.data
-      const pictures = dataPosts.filter(post => post.full_picture != null).map(post => post.full_picture)
+      //Pedimos el ultimo post que se publicó
+      const response = await axios.get(`https://graph.facebook.com/v16.0/me/posts?fields=created_time%2Cdescription%2Ccaption%2Cfull_picture&access_token=${code}&limit=1`)
+      const lastPost = response.data.data
+      const fechaISO = lastPost[0].created_time
+      const fechaObj = new Date(fechaISO);
+      fechaObj.setMonth(fechaObj.getMonth() - 6);
+      const anio = fechaObj.getFullYear();
+      const mes = ('0' + (fechaObj.getMonth() + 1)).slice(-2); // agregar cero al mes si es necesario y obtener solo los últimos dos dígitos
+      const dia = ('0' + fechaObj.getDate()).slice(-2); // agregar cero al día si es necesario y obtener solo los últimos dos dígitos
+      const fechaDesde = anio + '-' + mes + '-' + dia;
+
+      const response2 = await axios.get(`https://graph.facebook.com/v16.0/me/posts?fields=created_time%2Cdescription%2Ccaption%2Cfull_picture&access_token=${code}&since=${fechaDesde}`)
+      
+      const datePosts = response2.data.data
+      const pictures = datePosts.filter(post => post.full_picture != null).map(post => post.full_picture)
       const texts = await processPictures(pictures)
-      const stressRatio = await processSentiment(texts)
-      res.send(`Se han analizado las imagenes y usted posee un valor de estres de: ${stressRatio}`)
+      
+      const meaningcloud = await meaningCloudProcess(texts)
+
+
+      res.send(`El análisis de imágenes arroja las siguientes polaridades ${meaningcloud}`)
     }catch (error){
       console.log(error.response)
       res.status(500).send('Error al procesar las imágenes')
